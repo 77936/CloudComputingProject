@@ -3,7 +3,7 @@ import numpy as np
 import glob
 import os
 
-# Put all 8 CSVs in a folder named 'dataset'
+# Combine all 8 CSVs from the 'dataset' folder into a single DataFrame
 path = r'./dataset' 
 all_files = glob.glob(os.path.join(path, "*.csv"))
 
