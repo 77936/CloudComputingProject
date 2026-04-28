@@ -1,0 +1,9 @@
+-r requirements-local.txt
+apache-beam[gcp]>=2.60.0
+Flask>=3.0.0
+google-cloud-aiplatform>=1.71.1
+google-cloud-bigquery>=3.25.0
+google-cloud-pubsub>=2.27.1
+google-cloud-storage>=2.18.2
+gunicorn>=23.0.0
+requests>=2.32.3
