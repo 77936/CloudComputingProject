@@ -54,10 +54,137 @@ Vertex serving and the batch comparison path. The PowerShell scripts under
 - billing is enabled for the target project
 - the artifact bundle already exists locally
 
+### GCP deployment run order
+
+Set these values first:
+
+```powershell
+$PROJECT_ID = "your-gcp-project-id"
+$REGION = "us-central1"
+$BUCKET = "your-unique-rtad-bucket"
+$RUN_ID = "20260428-095957"
+$BUNDLE = ".\artifacts\$RUN_ID\bundle.joblib"
+$EVENTS = ".\artifacts\$RUN_ID\test_events.jsonl"
+$BQ_RESULTS = "$PROJECT_ID`:rtad.prediction_results"
+$BQ_RESULTS_SQL = "$PROJECT_ID.rtad.prediction_results"
+$TOPIC = "projects/$PROJECT_ID/topics/rtad-events"
+```
+
+1. Create the shared cloud resources:
+
+```powershell
+.\deploy\setup_gcp.ps1 -ProjectId $PROJECT_ID -Region $REGION -BucketName $BUCKET
+```
+
+This enables the required GCP APIs and creates the bucket, Pub/Sub topic and
+subscription, BigQuery dataset, and BigQuery tables. Run this first after
+confirming billing is enabled.
+
+2. Deploy the Vertex AI prediction endpoint:
+
+```powershell
+.\deploy\deploy_vertex.ps1 -ProjectId $PROJECT_ID -Region $REGION -BucketName $BUCKET -ArtifactBundle $BUNDLE
+```
+
+This uploads the model bundle, builds the predictor image, uploads a Vertex AI
+model, creates or reuses the endpoint, and deploys the model. Save the printed
+endpoint ID for the Dataflow command.
+
+3. Launch the streaming Dataflow path:
+
+```powershell
+.\deploy\launch_dataflow.ps1 `
+  -ProjectId $PROJECT_ID `
+  -Region $REGION `
+  -BucketName $BUCKET `
+  -InputTopic $TOPIC `
+  -BigQueryTable $BQ_RESULTS `
+  -EndpointId "PASTE_ENDPOINT_ID"
+```
+
+This starts the Pub/Sub -> Dataflow -> Vertex AI -> BigQuery pipeline. It can
+keep billing while running, so cancel it after the demo or smoke test.
+
+4. Publish a small sample event:
+
+```powershell
+$sample = Get-Content .\artifacts\$RUN_ID\test_events.jsonl -TotalCount 1
+gcloud pubsub topics publish rtad-events --message="$sample"
+```
+
+Then verify that a row appears in BigQuery:
+
+```powershell
+bq query --use_legacy_sql=false "SELECT * FROM ``$BQ_RESULTS_SQL`` ORDER BY inference_timestamp DESC LIMIT 5"
+```
+
+5. Create or run the Cloud Run batch job:
+
+```powershell
+.\deploy\schedule_batch_job.ps1 `
+  -ProjectId $PROJECT_ID `
+  -Region $REGION `
+  -BucketName $BUCKET `
+  -ArtifactBundle $BUNDLE `
+  -InputJsonl $EVENTS `
+  -BigQueryTable $BQ_RESULTS `
+  -ExecuteNow
+```
+
+This builds the batch scorer container, uploads the bundle and input JSONL to
+GCS, creates or updates a Cloud Run Job, and optionally executes it. The job
+uploads batch output to `gs://$BUCKET/batch/results/` and appends compatible
+prediction rows to BigQuery. Use `-CreateScheduler` only if you need a recurring
+Cloud Scheduler trigger; manual execution is safer for the demo.
+
+6. Capture checkpoint evidence:
+
+- Vertex AI endpoint and deployed model
+- Dataflow job graph/status
+- Pub/Sub topic and published messages
+- BigQuery prediction rows
+- Cloud Run Job execution
+- GCS artifact/input/output objects
+- Billing report grouped by service/SKU and labels
+
+7. Stop expensive resources:
+
+```powershell
+.\deploy\cleanup_gcp.ps1 -ProjectId $PROJECT_ID -Region $REGION
+```
+
+By default this cancels running Dataflow jobs only. Add explicit switches when
+you are ready to delete more:
+
+```powershell
+.\deploy\cleanup_gcp.ps1 `
+  -ProjectId $PROJECT_ID `
+  -Region $REGION `
+  -BucketName $BUCKET `
+  -DeleteCloudRunJob `
+  -DeleteVertexEndpoint `
+  -DeletePubSub `
+  -DeleteBucketContents
+```
+
+### Cost notes
+
+- `setup_gcp.ps1` creates mostly low-cost resources, but BigQuery storage and
+  GCS storage can accrue small charges.
+- `deploy_vertex.ps1` uses Cloud Build, Artifact Registry, GCS, and Vertex AI.
+  A deployed Vertex endpoint can continue charging until undeployed/deleted.
+- `launch_dataflow.ps1` starts a streaming Dataflow job. Stop it after testing.
+- `schedule_batch_job.ps1` uses Cloud Build, Artifact Registry, GCS, Cloud Run
+  Jobs, and optionally BigQuery loads. Costs are easier to isolate because the
+  job is finite and labeled.
+- The scripts apply labels such as `project=rtad`, `environment=dev`, and
+  `component=vertex|dataflow|batch` where supported so Billing reports or
+  Billing export to BigQuery can separate the paths.
+
 ## Cloud architecture
 
 - Streaming path: `Simulator -> Pub/Sub -> Dataflow -> Vertex AI -> BigQuery`
-- Batch path: staged events -> scheduled scorer -> BigQuery
+- Batch path: `GCS input -> Cloud Run Job batch scorer -> GCS output + BigQuery`
 
 Both paths write compatible results so the comparison focuses on latency,
 throughput, and operational cost rather than different model behavior.
