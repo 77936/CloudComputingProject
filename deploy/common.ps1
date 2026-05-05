@@ -1,7 +1,18 @@
 $ErrorActionPreference = "Stop"
 
+function Add-GcloudSdkToPath {
+    $candidate = Join-Path $env:LOCALAPPDATA "Google\Cloud SDK\google-cloud-sdk\bin"
+    if ((Test-Path -LiteralPath (Join-Path $candidate "gcloud.cmd")) -and (($env:Path -split ";") -notcontains $candidate)) {
+        $env:Path = "$candidate;$env:Path"
+    }
+}
+
 function Assert-CommandAvailable {
     param([Parameter(Mandatory = $true)][string]$Name)
+
+    if ($Name -in @("gcloud", "bq")) {
+        Add-GcloudSdkToPath
+    }
 
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Required command '$Name' was not found on PATH. Install it before running this script."

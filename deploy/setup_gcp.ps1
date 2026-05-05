@@ -34,7 +34,13 @@ $services = @(
 )
 
 if ($PSCmdlet.ShouldProcess($ProjectId, "Enable required GCP APIs")) {
-    & gcloud services enable $services
+    foreach ($service in $services) {
+        Write-Host "Enabling API: $service"
+        & gcloud services enable $service
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to enable required API '$service'. Check project permissions and billing before continuing."
+        }
+    }
 }
 
 if (Test-GcsBucketExists -BucketName $BucketName) {
