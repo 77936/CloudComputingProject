@@ -12,7 +12,8 @@ param(
     [string]$ExperimentId = "stream-gcp",
     [int]$NumWorkers = 1,
     [int]$MaxNumWorkers = 1,
-    [ValidateSet("NONE", "THROUGHPUT_BASED")][string]$AutoscalingAlgorithm = "NONE"
+    [ValidateSet("NONE", "THROUGHPUT_BASED")][string]$AutoscalingAlgorithm = "NONE",
+    [string]$WorkerZone
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,11 +23,21 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Requirements = Join-Path $Root "requirements-gcp.txt"
 $Pipeline = Join-Path $PSScriptRoot "dataflow_job.py"
 $Python = Assert-LocalPythonExists -Root $Root
-$labels = Get-LabelString -Component "dataflow" -Environment $Environment -ExtraLabels @{ experiment = $ExperimentId }
+$dataflowLabels = @{
+    project = "rtad"
+    environment = $Environment.ToLowerInvariant()
+    component = "dataflow"
+    experiment = $ExperimentId.ToLowerInvariant()
+} | ConvertTo-Json -Compress
 
 Assert-GcloudReady -ProjectId $ProjectId
 Assert-FileExists -Path $Requirements -Description "GCP requirements file"
 Assert-FileExists -Path $Pipeline -Description "Dataflow pipeline"
+
+$pythonVersion = & $Python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+if ($pythonVersion -notin @("3.10", "3.11", "3.12")) {
+    throw "Dataflow/Apache Beam should be launched from Python 3.10, 3.11, or 3.12. Current .venv uses Python $pythonVersion. Recreate .venv with Python 3.12 before launching Dataflow."
+}
 
 if (-not (Test-GcsBucketExists -BucketName $BucketName)) {
     throw "Bucket gs://$BucketName does not exist. Run deploy\setup_gcp.ps1 first."
@@ -53,14 +64,21 @@ $args = @(
     "--experiment_id=$ExperimentId",
     "--requirements_file=$Requirements",
     "--job_name=$JobName",
-    "--labels=$labels",
+    "--labels=$dataflowLabels",
     "--num_workers=$NumWorkers",
     "--max_num_workers=$MaxNumWorkers",
     "--autoscaling_algorithm=$AutoscalingAlgorithm"
 )
 
+if (-not [string]::IsNullOrWhiteSpace($WorkerZone)) {
+    $args += "--worker_zone=$WorkerZone"
+}
+
 if ($PSCmdlet.ShouldProcess($JobName, "Launch Dataflow streaming job")) {
     & $Python @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Dataflow launch failed. Install requirements-gcp.txt and fix the error above before publishing more events."
+    }
 }
 
 Write-Host "Dataflow launch submitted for job: $JobName"

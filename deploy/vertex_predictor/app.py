@@ -13,9 +13,13 @@ from scorer import BundleScorer
 def resolve_artifact_path() -> Path:
     artifact_uri = os.environ.get("ARTIFACT_URI")
     artifact_path = os.environ.get("ARTIFACT_PATH")
+    aip_storage_uri = os.environ.get("AIP_STORAGE_URI")
 
     if artifact_path:
         return Path(artifact_path)
+
+    if not artifact_uri and aip_storage_uri:
+        artifact_uri = aip_storage_uri.rstrip("/") + "/bundle.joblib"
 
     if artifact_uri and artifact_uri.startswith("gs://"):
         try:

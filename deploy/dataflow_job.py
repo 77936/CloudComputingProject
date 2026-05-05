@@ -102,6 +102,7 @@ def run(argv: list[str] | None = None) -> None:
                 known_args.bigquery_table,
                 write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
                 create_disposition=beam.io.BigQueryDisposition.CREATE_NEVER,
+                method=beam.io.WriteToBigQuery.Method.STREAMING_INSERTS,
             )
         )
 
